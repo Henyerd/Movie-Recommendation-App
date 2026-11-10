@@ -1,0 +1,11 @@
+# Secret API token - never commit this
+.streamlit/secrets.toml
+
+# Virtual environment (the installed libraries; anyone can recreate it from requirements.txt)
+venv/
+
+# Python's automatically generated compiled files
+__pycache__/
+
+# Cached API results
+data/
