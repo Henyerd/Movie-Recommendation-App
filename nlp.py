@@ -35,6 +35,14 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 # so read them as percentages: 40% of "how similar are these two movies" comes
 # from genre agreement, 35% from keywords, 15% from cast, 10% from director.
 # The one-letter codes are prefixes we attach to each word (see _movie_text).
+#
+# Tested and kept: we tried genre 40 / keywords 40 / cast 15 / director 5 and
+# compared nearest neighbours on The Dark Knight, Toy Story, Spirited Away and
+# The Godfather. Results were mostly unchanged (92% of all 1000 movies kept the
+# same #1 neighbour), but the one real change was a small loss on a
+# same-director match: Castle in the Sky (also by Miyazaki) dropped out of
+# Spirited Away's top 5. So director stays at 10%. This was a by-eye check on a
+# handful of films with no ground truth, not a proven improvement either way.
 FIELD_WEIGHTS = {"g": 0.40, "k": 0.35, "c": 0.15, "d": 0.10}
 
 # Informal words people type -> the genre word TF-IDF can actually match.
@@ -252,21 +260,23 @@ def build_features(movies):
 
 
 @st.cache_resource(show_spinner=False)
-def _cached_features(_movies, movie_ids):
+def _cached_features(_movies, movie_ids, weights):
     # Streamlit re-runs the whole script on every click. cache_resource keeps
     # the result in memory so it is computed once, not on every click.
     # `_movies` (leading underscore) is skipped by Streamlit's hashing; the cheap
-    # `movie_ids` tuple is what decides whether the cache is still valid.
+    # `movie_ids` and `weights` are what decide whether the cache is still valid.
     return build_features(_movies)
 
 
 def get_features(movies):
     """Return the (cached) NLPFeatures for this list of movies.
 
-    Recomputed only when the set of movies changes, i.e. after rebuilding the
-    TMDB cache with different movies.
+    Recomputed when the set of movies or the field weights change, but not
+    when the text of the same movies changes.
     """
-    return _cached_features(movies, tuple(m.get("id") for m in movies))
+    return _cached_features(
+        movies, tuple(m.get("id") for m in movies), tuple(FIELD_WEIGHTS.items())
+    )
 
 
 def similarity_matrix(features):
