@@ -33,50 +33,176 @@ MIN_PLATFORM_MOVIES = 10   # platforms with fewer movies than this are left out 
 RUNTIME_MAX = 240          # right end of the runtime slider (= "no maximum")
 
 # Colours used for the three "why" bars (the page theme is in .streamlit/config.toml)
-COLOURS = {"content": "#F5B841", "sentiment": "#8E7CFF", "quality": "#4CC38A"}
+COLOURS = {"content": "#FF8A65", "sentiment": "#F27AA5", "quality": "#7BD9A5"}
 ROLES = {"Anyone": "any", "Actors": "actor", "Directors": "director"}
+EXAMPLES = ["Funny and light", "A tense heist", "Animated for the whole family",
+            "Date-night romance", "Mind-bending sci-fi"]   # one-tap searches in the hero
 MOOD_STEPS = [round(i * 0.2, 1) for i in range(-5, 6)]  # -1.0 (dark) ... +1.0 (light)
 
 STYLE = """
 <style>
-.block-container { padding-top: 2.2rem; max-width: 1200px; }
-.tb-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
-.tb-wordmark { font-size: 2.7rem; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
-.tb-wordmark span { color: #F5B841; }
-.tb-tagline { color: #9AA0AE; font-size: 1.02rem; margin: 6px 0 16px 0; }
-.tb-title { font-size: 1.35rem; font-weight: 700; line-height: 1.25; }
-.tb-meta { color: #9AA0AE; font-size: 0.93rem; margin-top: 2px; }
-.tb-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-.tb-score { text-align: center; min-width: 58px; padding: 6px 10px; border-radius: 12px;
-            background: rgba(245,184,65,.14); color: #F5B841; }
-.tb-score b { display: block; font-size: 1.5rem; line-height: 1.1; }
-.tb-score small { font-size: 0.68rem; letter-spacing: .08em; text-transform: uppercase; }
-.tb-chips { margin: 10px 0 2px 0; }
-.tb-chip { display: inline-block; padding: 2px 11px; margin: 0 6px 6px 0; border-radius: 999px;
-           background: rgba(255,255,255,.08); font-size: 0.8rem; }
-.tb-chip.stream { background: rgba(245,184,65,.16); color: #F5B841; }
-.tb-chip.none { background: transparent; border: 1px dashed rgba(255,255,255,.22); color: #9AA0AE; }
-.tb-plot { color: #C3C7D2; font-size: 0.9rem; margin: 6px 0 10px 0; line-height: 1.45; }
-.tb-why { border-top: 1px solid rgba(255,255,255,.09); padding-top: 10px; margin-top: 4px; }
-.tb-why-title { font-size: 0.72rem; letter-spacing: .09em; text-transform: uppercase; color: #9AA0AE; margin-bottom: 6px; }
-.tb-why-row { display: grid; grid-template-columns: 112px 1fr 42px; align-items: center; gap: 10px; margin-top: 7px; }
-.tb-why-label { font-size: 0.85rem; font-weight: 600; }
-.tb-bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.1); overflow: hidden; }
+/* "Velvet Night": warm dark theme. Colours, fonts and base size come from
+   .streamlit/config.toml; this block handles layout, cards and the details
+   the theme file can't reach. Spacing follows an 8px grid (0.5rem steps). */
+:root {
+  --surface: #2B1D2E;  --surface-2: #35253A;
+  --text: #F7EBDD;     --muted: #C9B6C4;
+  --line: rgba(247,235,221,.14);
+  --coral: #FF8A65;    --butter: #FFD479;
+  --rose: #F27AA5;     /* second accent: everything to do with MOOD, plus the brand mark */
+  --grad: linear-gradient(100deg, #F27AA5 0%, #FF8A65 42%, #FFD479 100%);
+  /* film grain: SVG noise, white at very low alpha, tiled. Only ever drawn on the page
+     background (behind every card and all text), never over content. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 .13 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* the two-ring logo, drawn big for the hero background */
+  --rings: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2 7 40 30' fill='none' stroke-width='4'%3E%3Ccircle cx='17' cy='22' r='13' stroke='%23FF8A65'/%3E%3Ccircle cx='27' cy='22' r='13' stroke='%23F27AA5'/%3E%3C/svg%3E");
+}
+
+/* --- page background: two soft warm glows instead of a flat fill --------- */
+.stApp {
+  background:
+    radial-gradient(ellipse 85% 75% at 50% 42%, transparent 55%, rgba(8,3,10,.6) 100%),   /* vignette: darker edges */
+    var(--grain),
+    radial-gradient(900px 520px at 90% -6%, rgba(255,122,89,.20), transparent 62%),
+    radial-gradient(760px 480px at 4% 0%, rgba(255,212,121,.10), transparent 60%),
+    radial-gradient(820px 560px at 12% 105%, rgba(242,122,165,.14), transparent 62%),
+    #1E1420;
+  background-attachment: fixed;
+}
+[data-testid="stHeader"] { background: transparent; }
+.block-container { max-width: 1360px; padding: 2rem 2.5rem 4rem; }
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap: 1.5rem; }
+[data-testid="stCaptionContainer"] { font-size: 0.95rem; color: var(--muted); }
+.stApp h3 { margin-bottom: 0; }
+.st-key-results-head { gap: 0.25rem; }
+
+/* --- hero ------------------------------------------------------------------ */
+.st-key-hero {
+  background: linear-gradient(135deg, rgba(255,122,89,.18), rgba(255,212,121,.07) 55%, rgba(43,29,46,.7));
+  border: 1px solid var(--line); border-radius: 28px; padding: 2rem 2.5rem 2rem;
+  box-shadow: 0 16px 48px rgba(0,0,0,.25); gap: 1rem;
+  position: relative; overflow: hidden; isolation: isolate;
+}
+.st-key-hero::before {   /* the logo, oversized and faint, cropped by the hero's edge */
+  content: ""; position: absolute; z-index: -1; pointer-events: none;
+  right: -90px; top: 50%; width: 600px; height: 450px; transform: translateY(-50%) rotate(-8deg);
+  background: var(--rings) no-repeat center / contain; opacity: .14;
+}
+.tb-brand { display: flex; align-items: center; gap: 16px; }
+.tb-wordmark { font-family: "Fraunces", Georgia, serif; font-size: 3.5rem; font-weight: 700;
+               letter-spacing: -0.02em; line-height: 1.1; padding-bottom: 4px;
+               background: var(--grad); -webkit-background-clip: text; background-clip: text;
+               -webkit-text-fill-color: transparent; color: transparent; }
+.tb-tagline { color: #EBDCE6; font-size: 1.2rem; margin: 0; max-width: 40rem; }
+.st-key-hero [data-testid="stTextInputRootElement"] { min-height: 3.5rem; border-radius: 16px; background: rgba(30,20,32,.75);
+                                      border: 1px solid rgba(247,235,221,.25); }
+.st-key-hero [data-baseweb="input"], .st-key-hero [data-baseweb="base-input"] { background: transparent; min-height: 3.5rem; }
+.st-key-hero input { font-size: 1.1rem; padding: 0.75rem 1.25rem; min-height: 3.5rem; }
+.st-key-hero [data-testid="stTextInputRootElement"]:focus-within { border-color: var(--coral); box-shadow: 0 0 0 3px rgba(255,138,101,.25); }
+.tb-try { color: #E0CEDA; font-size: 0.95rem; margin: 0; }
+/* example buttons: small pills that wrap onto several lines instead of stacking */
+.st-key-hero [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: 0.5rem; }
+.st-key-hero [data-testid="stColumn"] { flex: 0 0 auto; width: auto; min-width: 0; }
+.st-key-hero button { min-height: 2.25rem; padding: 0.25rem 1rem; font-size: 0.95rem; }
+
+/* --- buttons ------------------------------------------------------------- */
+button[data-testid="stBaseButton-secondary"] {
+  border: 1.5px solid rgba(255,138,101,.6); border-radius: 999px; color: var(--text);
+  background: transparent; font-weight: 600; padding: 0.25rem 1.25rem;
+}
+button[data-testid="stBaseButton-secondary"]:hover { background: rgba(255,138,101,.16); border-color: var(--coral); color: #fff; }
+button[data-testid="stBaseButton-primary"] { border-radius: 999px; background: var(--coral); color: #2A1224; font-weight: 700; border: none; }
+
+/* --- mood panel: rose accent (rose always means "mood") -------------------------------- */
+[data-testid="stSidebar"] [data-testid="stExpander"]:has([class*="st-key-mood"]) {
+  border-color: rgba(242,122,165,.5); box-shadow: inset 4px 0 0 var(--rose);
+}
+[data-testid="stSidebar"] [data-testid="stExpander"]:has([class*="st-key-mood"]) summary p { color: var(--rose); }
+
+/* --- sidebar: bigger labels, roomier groups -------------------------------- */
+[data-testid="stSidebar"] h3 { font-size: 1.6rem; }
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+[data-testid="stSidebar"] label p { font-size: 1rem; font-weight: 600; }
+[data-testid="stSidebar"] [data-testid="stExpander"] { border-radius: 16px; background: rgba(255,255,255,.03); border-color: var(--line); }
+[data-testid="stSidebar"] [data-testid="stExpander"] summary { padding: 0.75rem 1rem; }
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p { font-size: 1.05rem; font-weight: 700; }
+[data-testid="stSidebar"] [data-testid="stExpanderDetails"] { gap: 1.25rem; padding-top: 0.5rem; }
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top: 1rem; }
+
+/* --- result cards -------------------------------------------------------- */
+[class*="st-key-card-"] {
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--line); border-radius: 24px; padding: 1.5rem;
+  box-shadow: 0 10px 32px rgba(0,0,0,.28);
+}
+/* the top-ranked card (and only that card) gets the gradient border and glow */
+[class*="st-key-card-top-"] {
+  border: 2px solid transparent;
+  background: linear-gradient(160deg, var(--surface-2), var(--surface)) padding-box, var(--grad) border-box;
+  box-shadow: 0 14px 44px rgba(255,122,89,.22);
+}
+.tb-badge { display: inline-block; background: var(--grad); color: #2A1224; font-weight: 700; font-size: 0.875rem;
+            padding: 0.25rem 0.75rem; border-radius: 999px; margin-bottom: 0.5rem; }
+.tb-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.tb-title { font-family: "Fraunces", Georgia, serif; font-size: 1.7rem; font-weight: 600; line-height: 1.2; }
+.tb-meta { color: var(--muted); font-size: 1.05rem; margin-top: 0.25rem; }
+.tb-score { text-align: center; min-width: 4.5rem; flex-shrink: 0; white-space: nowrap; padding: 0.5rem 0.75rem; border-radius: 16px;
+            background: rgba(255,138,101,.16); color: var(--coral); }
+.tb-score b { display: block; font-size: 1.7rem; line-height: 1.1; }
+.tb-score small { font-size: 0.875rem; font-weight: 600; letter-spacing: .04em; }
+.tb-chips { margin: 0.75rem 0 0 0; }
+.tb-chip { display: inline-block; padding: 0.25rem 0.875rem; margin: 0 0.5rem 0.5rem 0; border-radius: 999px;
+           background: rgba(247,235,221,.10); font-size: 0.9rem; }
+.tb-chip.stream { background: rgba(255,212,121,.16); color: var(--butter); }
+.tb-chip.none { background: transparent; border: 1px dashed rgba(247,235,221,.3); color: var(--muted); }
+.tb-chips .tb-meta { font-size: 0.9rem; margin-right: 0.25rem; }
+.tb-plot { color: #E6D6E0; font-size: 1.05rem; margin: 0.5rem 0 0.5rem 0; line-height: 1.6; }
+
+/* --- "why this pick" panel (sits to the right of the details) ---------------- */
+.tb-why { background: rgba(20,12,22,.45); border: 1px solid var(--line); border-radius: 18px; padding: 1rem 1.25rem 1.25rem; }
+.tb-why-title { font-size: 0.875rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tb-why-row { margin-top: 1rem; }
+.tb-why-top { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; margin-bottom: 0.5rem; }
+.tb-why-label { font-size: 1rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem; }
+.tb-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.tb-pts { font-size: 1rem; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.tb-bar { height: 8px; border-radius: 4px; background: rgba(247,235,221,.12); overflow: hidden; }
 .tb-bar div { height: 100%; border-radius: 4px; }
-.tb-pts { text-align: right; font-size: 0.85rem; color: #C3C7D2; font-variant-numeric: tabular-nums; }
-.tb-why-text { grid-column: 2 / 4; color: #9AA0AE; font-size: 0.82rem; margin-top: -3px; line-height: 1.4; }
-.tb-noposter { aspect-ratio: 2 / 3; border-radius: 10px; border: 1px dashed rgba(255,255,255,.2);
-               display: flex; align-items: center; justify-content: center; color: #9AA0AE; font-size: .85rem; }
-div[data-testid="stImage"] img { border-radius: 10px; max-width: 220px !important; }
-.tb-noposter { max-width: 220px; }
+.tb-why-text { color: var(--muted); font-size: 0.9rem; margin-top: 0.5rem; line-height: 1.45; }
+
+/* --- posters ------------------------------------------------------------- */
+div[data-testid="stImage"] img { border-radius: 16px; max-width: 280px !important; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.tb-noposter { aspect-ratio: 2 / 3; max-width: 280px; border-radius: 16px; border: 1px dashed rgba(247,235,221,.3);
+               display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.95rem; }
+
+/* --- narrower screens: the "why" panel drops below the details, then
+       everything stacks on phones ----------------------------------------- */
+@media (max-width: 1180px) {
+  [class*="st-key-card-"] [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
+  [class*="st-key-card-"] [data-testid="stColumn"]:nth-child(1) { flex: 0 0 190px !important; width: 190px !important; min-width: 0 !important; }
+  [class*="st-key-card-"] [data-testid="stColumn"]:nth-child(2) { flex: 1 1 0 !important; width: auto !important; min-width: 0 !important; }
+  [class*="st-key-card-"] [data-testid="stColumn"]:nth-child(3) { flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important; }
+}
+@media (max-width: 640px) {
+  .block-container { padding: 1.25rem 1rem 3rem; }
+  .st-key-hero { padding: 1.5rem 1.25rem; border-radius: 22px; }
+  .tb-wordmark { font-size: 2.6rem; }
+  .st-key-hero::before { width: 380px; height: 285px; right: -110px; opacity: .10; }
+  .tb-tagline { font-size: 1.05rem; }
+  [class*="st-key-card-"] { padding: 1rem; border-radius: 20px; }
+  [class*="st-key-card-"] [data-testid="stColumn"]:nth-child(1),
+  [class*="st-key-card-"] [data-testid="stColumn"]:nth-child(2) { flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important; }
+  .tb-title { font-size: 1.5rem; }
+  div[data-testid="stImage"] img, .tb-noposter { max-width: 170px !important; }
+}
 </style>
 """
 
 # Two overlapping rings: two people, one shared choice.
 LOGO = (
-    '<svg width="44" height="44" viewBox="0 0 44 44" fill="none" aria-hidden="true">'
-    '<circle cx="17" cy="22" r="13" stroke="#F5B841" stroke-width="4"/>'
-    '<circle cx="27" cy="22" r="13" stroke="#EDEEF2" stroke-width="4"/></svg>'
+    '<svg width="56" height="56" viewBox="0 0 44 44" fill="none" aria-hidden="true">'
+    '<circle cx="17" cy="22" r="13" stroke="#FF8A65" stroke-width="4"/>'
+    '<circle cx="27" cy="22" r="13" stroke="#F27AA5" stroke-width="4"/></svg>'
 )
 
 
@@ -361,18 +487,23 @@ def render_why(rows, show_points=True):
     for row in rows:
         points = f"+{row['points']:.0f}" if show_points else f"{row['score'] * 100:.0f}%"
         body += (
-            f'<div class="tb-why-row"><div class="tb-why-label">{esc(row["label"])}</div>'
+            f'<div class="tb-why-row"><div class="tb-why-top"><span class="tb-why-label">'
+            f'<span class="tb-dot" style="background:{row["colour"]}"></span>{esc(row["label"])}</span>'
+            f'<span class="tb-pts">{points}</span></div>'
             f'<div class="tb-bar"><div style="width:{max(row["score"], 0) * 100:.0f}%;background:{row["colour"]}"></div></div>'
-            f'<div class="tb-pts">{points}</div>'
             f'<div class="tb-why-text">{esc(row["text"])}</div></div>'
         )
     return f'<div class="tb-why"><div class="tb-why-title">Why this pick</div>{body}</div>'
 
 
-def render_card(movie, score, why_html, key, score_label="match"):
-    """One result: poster on the left, details and the explanation on the right."""
-    with st.container(border=True):
-        poster, info = st.columns([1, 3.2], gap="medium")
+def render_card(movie, score, why_html, key, score_label="match", badge=None):
+    """One result: poster, details, and the "why this pick" panel side by side.
+
+    `badge` is set only for the top-ranked card. It switches on the gradient
+    border (the CSS looks for "card-top" in the container's key).
+    """
+    with st.container(key=f"card-top-{key}" if badge else f"card-{key}"):
+        poster, info, why = st.columns([1.2, 2.2, 1.4], gap="medium")
         with poster:
             if movie.get("poster_path"):
                 st.image(POSTER_URL + movie["poster_path"], width="stretch")
@@ -390,18 +521,20 @@ def render_card(movie, score, why_html, key, score_label="match"):
             platforms = filters.streaming_platforms(movie)
             streams = ("".join(f'<span class="tb-chip stream">{esc(p)}</span>' for p in platforms)
                        if platforms else '<span class="tb-chip none">Not streaming in Canada</span>')
+            badge_html = f'<div class="tb-badge">★ {esc(badge)}</div>' if badge else ""
 
             st.markdown(
-                f'<div class="tb-head"><div><div class="tb-title">{esc(movie["title"])}</div>'
+                f'{badge_html}<div class="tb-head"><div><div class="tb-title">{esc(movie["title"])}</div>'
                 f'<div class="tb-meta">{esc(" · ".join(meta))}</div></div>'
                 f'<div class="tb-score"><b>{round(score * 100)}</b><small>{esc(score_label)}</small></div></div>'
                 f'<div class="tb-chips">{genres}</div>'
                 f'<div class="tb-chips"><span class="tb-meta">Streaming: </span>{streams}</div>'
-                f'<div class="tb-plot">{esc(shorten(movie.get("overview")))}</div>'
-                f'{why_html}',
+                f'<div class="tb-plot">{esc(shorten(movie.get("overview")))}</div>',
                 unsafe_allow_html=True,
             )
             st.button("More like this", key=key, on_click=open_more_like, args=(movie["id"],))
+        with why:
+            st.markdown(why_html, unsafe_allow_html=True)
 
 
 def open_more_like(movie_id):
@@ -410,6 +543,12 @@ def open_more_like(movie_id):
 
 
 def close_more_like():
+    st.session_state["more_like"] = None
+
+
+def use_example(text):
+    """An example button was pressed: put its text in the search box."""
+    st.session_state["query"] = text
     st.session_state["more_like"] = None
 
 
@@ -435,17 +574,21 @@ def main():
 
     criteria, tone = render_sidebar(options, defaults)
 
-    # --- header -------------------------------------------------------------
-    st.markdown(
-        f'<div class="tb-brand">{LOGO}<div><div class="tb-wordmark">Tie<span>breaker</span></div></div></div>'
-        '<div class="tb-tagline">Two people, one couch, one pick. Tell us the vibe and we will settle it.</div>',
-        unsafe_allow_html=True,
-    )
-    query = st.text_input(
-        "What are you in the mood for?", key="query", on_change=close_more_like,
-        placeholder="e.g. something funny and light, a tense heist, animated for kids...",
-        label_visibility="collapsed",
-    ).strip()
+    # --- hero: wordmark, pitch, search box and one-tap example searches -------
+    with st.container(key="hero"):
+        st.markdown(
+            f'<div class="tb-brand">{LOGO}<div class="tb-wordmark">Tiebreaker</div></div>'
+            '<div class="tb-tagline">Two people, one couch, one pick. Tell us the vibe and we will settle it.</div>',
+            unsafe_allow_html=True,
+        )
+        query = st.text_input(
+            "What are you in the mood for?", key="query", on_change=close_more_like,
+            placeholder="What's the vibe tonight?",
+            label_visibility="collapsed",
+        ).strip()
+        st.markdown('<div class="tb-try">Not sure? Try one of these:</div>', unsafe_allow_html=True)
+        for column, text in zip(st.columns(len(EXAMPLES)), EXAMPLES):
+            column.button(text, key=f"example_{text}", on_click=use_example, args=(text,))
 
     # --- step 3: filters -> the ids that are allowed through ------------------
     candidate_ids, explanation = run_filters(movies, size, criteria)
@@ -480,7 +623,8 @@ def main():
         for rank, result in enumerate(results, 1):
             render_card(result["movie"], result["similarity"],
                         render_why(similar_rows(result, seed), show_points=False),
-                        key=f"more_{rank}_{result['movie']['id']}", score_label="similar")
+                        key=f"more_{rank}_{result['movie']['id']}", score_label="similar",
+                        badge="Closest match" if rank == 1 else None)
         return
 
     results = run_recommend(movies, features, size, query, tone, candidate_ids, RESULTS)
@@ -495,15 +639,17 @@ def main():
                 st.info("None of the words in your search matched a genre or theme (mood words like dark or "
                         "light are handled by the mood slider), so these are ranked by mood and quality only.")
     else:
-        st.subheader("Top picks tonight")
-        st.caption("Type what you are in the mood for above to personalise the list. "
-                   "Right now it ranks by quality" + (" and mood." if tone is not None else "."))
+        with st.container(key="results-head"):
+            st.subheader("Top picks tonight")
+            st.caption("Type what you are in the mood for, or tap an idea above, to personalise the list. "
+                       "Right now it ranks by quality" + (" and mood." if tone is not None else "."))
 
     # With no search and no mood there is nothing to "match", only quality to rank by
     label = "match" if (query or tone is not None) else "score"
     for rank, result in enumerate(results, 1):
         render_card(result["movie"], result["score"], render_why(why_rows(result, query, tone)),
-                    key=f"more_{rank}_{result['movie']['id']}", score_label=label)
+                    key=f"more_{rank}_{result['movie']['id']}", score_label=label,
+                    badge="Top pick" if rank == 1 else None)
 
 
 main()

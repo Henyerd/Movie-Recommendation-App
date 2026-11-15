@@ -1,9 +1,20 @@
-# Streamlit theme for Tiebreaker: a dark, "movie night" look with a warm
-# gold accent. Unlike secrets.toml, this file is safe to commit.
+# Streamlit theme for Tiebreaker: "Velvet Night", a warm dark theme.
+# Deep aubergine background, cream text, coral accent. Fonts are loaded from
+# Google Fonts: Fraunces (a warm, friendly serif) for headings and DM Sans for
+# everything else. Unlike secrets.toml, this file is safe to commit.
+# (Streamlit reads this file at start-up, so restart the app after editing.)
 [theme]
 base = "dark"
-primaryColor = "#F5B841"
-backgroundColor = "#12141A"
-secondaryBackgroundColor = "#1B1E27"
-textColor = "#EDEEF2"
-font = "sans serif"
+primaryColor = "#FF7A59"
+backgroundColor = "#1E1420"
+secondaryBackgroundColor = "#2B1D2E"
+textColor = "#F7EBDD"
+borderColor = "#4A3550"
+baseRadius = "large"
+baseFontSize = 17
+font = "DM Sans:https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#251927"
+secondaryBackgroundColor = "#33243A"
