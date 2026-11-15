@@ -62,6 +62,17 @@ QUERY_SYNONYMS = {
     "fantastical": ["fantasy"], "magical": ["fantasy"],
 }
 
+# Words that describe the TONE of a movie rather than its topic. When the user
+# also supplies a tone (the -1..+1 slider), these are removed from the query
+# before content scoring so tone isn't counted twice. Otherwise "light" would
+# match the keyword "based on light novel" and "dark" would match "dark
+# comedy". Edit this set to add or remove mood words.
+MOOD_WORDS = {
+    "dark", "light", "lighthearted", "gritty", "bleak", "grim", "gloomy",
+    "depressing", "sad", "funny", "heartwarming", "uplifting", "cheerful",
+    "happy", "upbeat",
+}
+
 # "not X", "no X", "without X", "never X" (optionally "not too X", etc.)
 _NEGATION = re.compile(
     r"\b(?:not|no|without|never)\s+(?:(?:too|so|very|overly|that)\s+)?[a-z']+"
@@ -149,20 +160,29 @@ def _apply_field_weights(X, col_fields):
     return combined[:, np.argsort(np.concatenate(order))]  # restore column order
 
 
-def _query_groups(query):
+def _query_groups(query, strip_mood=False):
     """Split a typed query into one group of alternative words per typed word.
 
     "something funny" -> [["funny", "comedy"]]: the typed word plus any
     synonyms from QUERY_SYNONYMS. A movie matching ANY word in a group counts
     as matching that typed word.
+
+    With strip_mood=True, mood words (MOOD_WORDS) are dropped as literal words.
+    A mood word that implies a genre keeps that genre: "funny" becomes just
+    ["comedy"], because asking for comedy is a content request, not a tone.
+    Mood words with no genre ("dark", "light") disappear entirely.
     """
     q = (query or "").lower().replace("sci-fi", "science fiction").replace("scifi", "science fiction")
     q = _NEGATION.sub(" ", q)  # drop negated words: "not stupid" -> ""
-    return [
-        [w] + QUERY_SYNONYMS.get(w, [])
-        for w in _words(q)
-        if w not in _QUERY_FILLER
-    ]
+    groups = []
+    for w in _words(q):
+        if w in _QUERY_FILLER:
+            continue
+        synonyms = QUERY_SYNONYMS.get(w, [])
+        group = synonyms if (strip_mood and w in MOOD_WORDS) else [w] + synonyms
+        if group:
+            groups.append(group)
+    return groups
 
 
 def _query_text(query):
@@ -192,8 +212,11 @@ def query_vector(query, features):
     return normalize(_apply_field_weights(raw, features.col_fields))
 
 
-def query_scores(query, features):
+def query_scores(query, features, strip_mood=False):
     """Score every movie by how many of the query's words it matches (0 to 1).
+
+    Pass strip_mood=True when the user has also chosen a tone, so mood words
+    like "dark" and "light" are not counted a second time (see MOOD_WORDS).
 
     This is what the recommender uses for typed queries. Cosine similarity
     asks "are these two word-lists the same shape?", so a "Comedy, Adventure,
@@ -218,7 +241,7 @@ def query_scores(query, features):
     credit = {f: FIELD_WEIGHTS[f] / best_field for f in ("g", "k")}
 
     per_item = []
-    for group in _query_groups(query):
+    for group in _query_groups(query, strip_mood):
         item = None
         for word in group:
             for field in ("g", "k"):
