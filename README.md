@@ -4,7 +4,7 @@
 
 Type the vibe you're after ("a tense heist", "funny and light", "animated for the whole family"), narrow things down with filters, and Tiebreaker ranks 1,000 well-known films and explains *why* each one made the list. It is a web app built with Python and [Streamlit](https://streamlit.io), using film data from [TMDB](https://www.themoviedb.org).
 
-> This product uses the TMDB API but is not endorsed or certified by TMDB.
+> This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.
 
 ## What you can do
 
@@ -19,7 +19,7 @@ Type the vibe you're after ("a tense heist", "funny and light", "animated for th
 
 ## How it works
 
-1. **Data** (`tmdb_client.py`). A one-off script downloads about 1,000 popular and top-rated films from TMDB (details, cast, keywords, age ratings, Canadian streaming services, poster path) and saves them to `data/movies.json`. After that the app reads the file and never needs the network, except to load poster images.
+1. **Data** (`tmdb_client.py`). A one-off script downloads about 1,000 popular and top-rated films from TMDB (details, cast, keywords, age ratings, Canadian streaming services, poster path) and saves them to `data/movies.json`. That file is included in this repo, so the app runs straight away; it reads the file and never needs the network, except to load poster images.
 2. **Text features** (`nlp.py`).
    - *TF-IDF* turns each film's genres, keywords, cast and director into numbers so two films can be compared. Fields are weighted 40% genre, 35% keywords, 15% cast, 10% director. This powers "More like this".
    - *VADER* sentiment scores the wording of each plot summary from −1 (dark) to +1 (light). This powers the Mood slider.
@@ -43,7 +43,7 @@ Type the vibe you're after ("a tense heist", "funny and light", "animated for th
 
 ## Run it locally
 
-You need **Python 3.12** (what the app is tested on; newer versions should also work) and a free TMDB account.
+You need **Python 3.12** (what the app is tested on; newer versions should also work). A TMDB account is only needed if you want to refresh the film data (step 3).
 
 ```bash
 # 1. Get the code and create an isolated environment
@@ -54,23 +54,24 @@ source venv/bin/activate            # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-**2. Add your own TMDB token.** The app's data comes from TMDB, and each TMDB key belongs to one account, so you need your own. Create a free account at [themoviedb.org](https://www.themoviedb.org), then go to *Settings → API* and copy your **API Read Access Token** (the long one that starts with `eyJ`). Create the file `.streamlit/secrets.toml`:
+```bash
+# 2. Start the app (the film data is already in the repo)
+streamlit run app.py
+```
+
+That is all you need to try it. The next step is only for refreshing the film data.
+
+**3. (Optional) Refresh the data with your own TMDB token.** The data comes from TMDB, and each TMDB key belongs to one account, so you need your own. Create a free account at [themoviedb.org](https://www.themoviedb.org), then go to *Settings → API* and copy your **API Read Access Token** (the long one that starts with `eyJ`). Create the file `.streamlit/secrets.toml`:
 
 ```toml
 TMDB_TOKEN = "paste-your-read-access-token-here"
 ```
 
-This file is git-ignored on purpose. Never commit it, and never paste the token into the code.
+This file is git-ignored on purpose. Never commit it, and never paste the token into the code. Then download fresh data (about 4 to 5 minutes):
 
 ```bash
-# 3. Download the film data once (about 4 to 5 minutes)
-python build_cache.py
-
-# 4. Start the app
-streamlit run app.py
+python build_cache.py --force
 ```
-
-Step 3 writes `data/movies.json`. If you ever want a fresh copy, run `python build_cache.py --force`.
 
 ## Project layout
 
@@ -83,18 +84,20 @@ Step 3 writes `data/movies.json`. If you ever want a fresh copy, run `python bui
 | `tmdb_client.py` | Talks to TMDB, handles rate limits, writes the cache |
 | `build_cache.py` | Command-line script that builds `data/movies.json` |
 | `.streamlit/config.toml` | Theme: colours, fonts and sizes |
-| `.streamlit/secrets.toml` | **Your** TMDB token (git-ignored, you create it) |
-| `data/movies.json` | The downloaded film data (git-ignored, built by you) |
+| `.streamlit/secrets.toml` | **Your** TMDB token, only needed to refresh the data (git-ignored, you create it) |
+| `data/movies.json` | The film data, a snapshot of TMDB from 14 November 2026 |
+| `assets/tmdb-logo.svg` | TMDB's approved logo, shown in the app footer |
 
 ## Deploying to Streamlit Community Cloud
 
-1. Push the repo to GitHub, then create the app at [share.streamlit.io](https://share.streamlit.io).
-2. In **Advanced settings**, choose **Python 3.12** from the Python version dropdown. This is the only place Community Cloud reads the version from; a `runtime.txt` file is not used.
-3. In **Advanced settings → Secrets**, paste `TMDB_TOKEN = "..."` (the same line as in your local `secrets.toml`). The token is only used to *download* film data, so it is only needed if the deployed app builds its own data; an app that ships with a ready-made `data/movies.json` never calls TMDB.
-4. **Provide the film data.** `data/movies.json` is git-ignored, so a fresh deployment has no film data until you add it (see the data notes below).
+1. Push the repo to GitHub, then go to [share.streamlit.io](https://share.streamlit.io) and click **Create app**.
+2. Choose **Yup, I have an app**, then enter the repository, the branch (`main`) and the main file path (`app.py`).
+3. Click **Advanced settings**. In the **Python version** dropdown choose **3.12**. This is the only place Community Cloud reads the version from; a `runtime.txt` file is not used, and changing it later means deleting and redeploying the app.
+4. In the same dialog, paste `TMDB_TOKEN = "..."` into **Secrets**. The film data is already in the repo, so the app does not call TMDB itself and works without a token; add one only if you want the deployed app to be able to rebuild its data.
+5. Click **Save**, then deploy.
 
 ## Data, attribution and TMDB's terms
 
-- Film data and posters come from TMDB. The app footer carries TMDB's required notice.
-- TMDB's API terms allow **non-commercial** use only, and say cached data must not be kept longer than **6 months**. Rebuild the cache before then.
-- Each person running their own copy should use their own TMDB token.
+- Film data and posters come from TMDB. The app footer carries TMDB's approved logo and required notice.
+- TMDB's API terms allow **non-commercial** use only, and say cached data must not be kept longer than **6 months**. `data/movies.json` was downloaded on **14 November 2026**, so refresh it (`python build_cache.py --force`) or remove it before **14 May 2027**.
+- Each person who refreshes the data should use their own TMDB token.

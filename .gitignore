@@ -7,5 +7,6 @@ venv/
 # Python's automatically generated compiled files
 __pycache__/
 
-# Cached API results
-data/
+# The movie cache (data/movies.json) IS committed so the deployed app has data.
+# Only the temporary file written while the cache is being built is ignored.
+data/*.tmp

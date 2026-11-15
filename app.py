@@ -13,7 +13,9 @@ touches a widget. So the shape of this file is always the same:
 Step 3 feeding step 4 (candidate_ids) is what makes the sidebar filters work.
 """
 
+import base64
 import html
+from pathlib import Path
 
 import streamlit as st
 
@@ -188,7 +190,8 @@ div[data-testid="stImage"] img { border-radius: 16px; max-width: 280px !importan
 /* --- footer (TMDB attribution) --------------------------------------------------------- */
 .tb-footer { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line); text-align: center;
              color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
-.tb-footer a { color: var(--coral); }
+.tb-footer-title { font-size: 0.875rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 0.5rem; }
+.tb-tmdb-logo { display: block; margin: 0 auto 0.75rem; height: 16px; width: auto; }  /* far smaller than the Tiebreaker wordmark: TMDB requires that */
 
 /* --- narrower screens: the "why" panel drops below the details, then
        everything stacks on phones ----------------------------------------- */
@@ -213,9 +216,15 @@ div[data-testid="stImage"] img { border-radius: 16px; max-width: 280px !importan
 </style>
 """
 
-# Required by TMDB's terms wherever their data is shown. Posters and all film
-# details in this app come from TMDB.
-TMDB_NOTICE = "This product uses the TMDB API but is not endorsed or certified by TMDB."
+# TMDB's API terms require (1) this notice, placed prominently, and (2) one of
+# their approved logos, shown LESS prominently than our own branding. Posters
+# and all film details in this app come from TMDB. The wording is theirs:
+# "This [website, program, service, application, product] uses TMDB and the TMDB
+# APIs but is not endorsed, certified, or otherwise approved by TMDB."
+TMDB_NOTICE = ("This application uses TMDB and the TMDB APIs but is not endorsed, "
+               "certified, or otherwise approved by TMDB.")
+# The approved "short" logo downloaded from themoviedb.org/about/logos-attribution.
+TMDB_LOGO_FILE = Path(__file__).parent / "assets" / "tmdb-logo.svg"
 
 # Two overlapping rings: two people, one shared choice.
 LOGO = (
@@ -597,11 +606,26 @@ def use_example(text):
 # ---------------------------------------------------------------------------
 # The page
 # ---------------------------------------------------------------------------
+def tmdb_logo_html():
+    """The TMDB logo as a small linked image, or "" if the file is missing.
+
+    The SVG is embedded in the page as base64 text, so the footer doesn't depend
+    on TMDB's servers being reachable.
+    """
+    try:
+        data = base64.b64encode(TMDB_LOGO_FILE.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+    return ('<a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer">'
+            f'<img class="tb-tmdb-logo" alt="TMDB logo" src="data:image/svg+xml;base64,{data}"></a>')
+
+
 def render_footer():
+    """Credits: TMDB's required logo and notice, on every screen."""
     st.markdown(
-        f'<div class="tb-footer">{esc(TMDB_NOTICE)}<br>'
-        'Film data and posters courtesy of <a href="https://www.themoviedb.org" target="_blank" '
-        'rel="noopener noreferrer">The Movie Database (TMDB)</a>.</div>',
+        '<div class="tb-footer"><div class="tb-footer-title">Credits</div>'
+        f'{tmdb_logo_html()}<div>{esc(TMDB_NOTICE)}</div>'
+        '<div>Film data and posters come from The Movie Database.</div></div>',
         unsafe_allow_html=True,
     )
 
