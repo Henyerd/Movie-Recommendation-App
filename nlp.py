@@ -62,6 +62,42 @@ QUERY_SYNONYMS = {
     "fantastical": ["fantasy"], "magical": ["fantasy"],
 }
 
+# Related terms: words a movie search treats as "close enough". Unlike
+# QUERY_SYNONYMS above (an informal word -> its genre, one way), these work in
+# BOTH directions: typing "robbery" also finds "heist" films and vice versa.
+# A related-term match earns RELATED_CREDIT (80%) of a direct match, so a film
+# tagged "heist" still outranks one that is only tagged "robbery".
+#
+# Rule for adding a group: only NEAR-synonyms, and never an umbrella term.
+# Because groups work both ways, a broad word in a group leaks into its narrow
+# partners: when "mystery" (66 films) sat with "detective" (16), a search for
+# "detective" matched 81 films. "thief"/"theft" did the same for heist (Psycho,
+# Bicycle Thieves). We audited every group by counting how many extra films each
+# typed word gained, and removed these broad partners: magic, war, battle,
+# supernatural, mystery, investigation, music, creature, hostage, vigilante,
+# apocalypse, cyborg. A word can only appear in one group.
+RELATED_GROUPS = [
+    ["heist", "robbery", "caper", "burglary"],
+    ["space", "spaceship", "spacecraft", "astronaut", "galaxy"],
+    ["spy", "espionage"],
+    ["zombie", "undead"],
+    ["detective", "whodunit"],
+    ["revenge", "vengeance"],
+    ["kidnapping", "abduction"],
+    ["prison", "jail"],
+    ["ghost", "haunted"],
+    ["gangster", "mafia", "mobster"],
+    ["robot", "android"],
+    ["witch", "wizard", "sorcery"],
+    ["dystopia", "dystopian"],
+    ["christmas", "holiday"],
+    ["western", "cowboy"],
+    ["lawyer", "courtroom", "trial"],
+    ["assassin", "hitman"],
+]
+RELATED_CREDIT = 0.8
+RELATED_TERMS = {w: [o for o in group if o != w] for group in RELATED_GROUPS for w in group}
+
 # Words that describe the TONE of a movie rather than its topic. When the user
 # also supplies a tone (the -1..+1 slider), these are removed from the query
 # before content scoring so tone isn't counted twice. Otherwise "light" would
@@ -160,34 +196,68 @@ def _apply_field_weights(X, col_fields):
     return combined[:, np.argsort(np.concatenate(order))]  # restore column order
 
 
-def _query_groups(query, strip_mood=False):
-    """Split a typed query into one group of alternative words per typed word.
+def _singular(word):
+    """A very light plural -> singular rule, so 'zombies' and 'zombie' (or
+    'comedies' and 'comedy') meet in the same place.
 
-    "something funny" -> [["funny", "comedy"]]: the typed word plus any
-    synonyms from QUERY_SYNONYMS. A movie matching ANY word in a group counts
-    as matching that typed word.
+    It does not need to produce real words ('zombie' becomes 'zomby'): both the
+    typed word and the movie keywords go through it, so they only have to end
+    up the SAME. It leaves words like 'class', 'virus' and 'bus' alone.
+    """
+    if len(word) > 4 and word.endswith("ies"):
+        word = word[:-3] + "y"
+    elif len(word) > 4 and word.endswith(("ches", "shes", "sses", "xes")):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        word = word[:-1]
+    if len(word) > 4 and word.endswith("ie"):   # zombie / zombies, movie / movies
+        word = word[:-2] + "y"
+    return word
+
+
+# Related terms looked up by their normalised form, so "zombies" finds the "zombie" group.
+_RELATED_BY_KEY = {_singular(word): others for word, others in RELATED_TERMS.items()}
+
+
+def _typed_words(query):
+    """The meaningful words of a typed query, in order ('sci-fi' expanded,
+    negated words and filler words like 'movie' removed)."""
+    q = (query or "").lower().replace("sci-fi", "science fiction").replace("scifi", "science fiction")
+    q = _NEGATION.sub(" ", q)  # drop negated words: "not stupid" -> ""
+    return [w for w in _words(q) if w not in _QUERY_FILLER]
+
+
+def _query_groups(query, strip_mood=False):
+    """One entry per typed word: (typed word, [(word, credit), ...]).
+
+    The list holds every word that counts as a match for the typed word, each
+    with its credit (1.0 = as good as the typed word itself):
+      * the typed word itself                                  credit 1.0
+      * informal synonyms from QUERY_SYNONYMS ("funny"->comedy)  credit 1.0
+      * related terms from RELATED_TERMS ("heist"->robbery)      credit 0.8
+    A movie matching ANY word in the list counts as matching the typed word,
+    scored by the best credit among them.
 
     With strip_mood=True, mood words (MOOD_WORDS) are dropped as literal words.
     A mood word that implies a genre keeps that genre: "funny" becomes just
     ["comedy"], because asking for comedy is a content request, not a tone.
-    Mood words with no genre ("dark", "light") disappear entirely.
+    Mood words with no genre ("dark", "light") end up with an empty list.
     """
-    q = (query or "").lower().replace("sci-fi", "science fiction").replace("scifi", "science fiction")
-    q = _NEGATION.sub(" ", q)  # drop negated words: "not stupid" -> ""
-    groups = []
-    for w in _words(q):
-        if w in _QUERY_FILLER:
-            continue
-        synonyms = QUERY_SYNONYMS.get(w, [])
-        group = synonyms if (strip_mood and w in MOOD_WORDS) else [w] + synonyms
-        if group:
-            groups.append(group)
-    return groups
+    pairs = []
+    for w in _typed_words(query):
+        synonyms = [(s, 1.0) for s in QUERY_SYNONYMS.get(w, [])]
+        if strip_mood and w in MOOD_WORDS:
+            group = synonyms
+        else:
+            related = _RELATED_BY_KEY.get(_singular(w), [])
+            group = [(w, 1.0)] + synonyms + [(r, RELATED_CREDIT) for r in related]
+        pairs.append((w, group))
+    return pairs
 
 
 def _query_text(query):
     """Turn a typed query into prefixed words in the same style as _movie_text."""
-    words = [w for group in _query_groups(query) for w in group]
+    words = [word for _, group in _query_groups(query) for word, _credit in group]
     # We don't know whether a typed word is a genre or a keyword, so offer it
     # as both. Words the model has never seen are ignored automatically.
     return " ".join([f"g_{w}" for w in words] + [f"k_{w}" for w in words])
@@ -212,6 +282,28 @@ def query_vector(query, features):
     return normalize(_apply_field_weights(raw, features.col_fields))
 
 
+def _word_hits(word, features, credit):
+    """How strongly each movie matches ONE word, as an array of 0..1 (or None
+    if that word appears in no movie's genres or keywords at all).
+
+    Genre match: full credit. Keyword match: a little less (FIELD_WEIGHTS
+    ratio, 35/40 = 0.875). A keyword matches only if the typed word IS the
+    keyword or is its last word (see keyword_heads on NLPFeatures), so
+    "bank heist" matches "heist" but "diamond mine" does not match "diamond".
+    """
+    hits, known = np.zeros(len(features.movie_ids)), False
+    for variant in {word, _singular(word)}:
+        column = features.vectorizer.vocabulary_.get(f"g_{variant}")
+        if column is not None:
+            known = True
+            hits = np.maximum(hits, features.presence[:, column].toarray().ravel() * credit["g"])
+        rows = features.keyword_heads.get(variant)
+        if rows is not None:
+            known = True
+            hits[rows] = np.maximum(hits[rows], credit["k"])
+    return hits if known else None
+
+
 def query_scores(query, features, strip_mood=False):
     """Score every movie by how many of the query's words it matches (0 to 1).
 
@@ -224,34 +316,53 @@ def query_scores(query, features, strip_mood=False):
     "funny", even though both are funny. Here we ask a simpler question: of
     the words the user typed, what share does this movie have?
 
-      * Each typed word (plus its synonyms) is one item. Words we have never
-        seen in any movie's genres or keywords are ignored, not counted
-        against the movie.
-      * A movie matches an item if the word appears in its genres or its
-        keywords. A genre match counts fully; a keyword match counts a little
-        less, in the same ratio as FIELD_WEIGHTS (35/40 = 0.875).
+      * Each typed word is one item. Its match strength is the best of: the
+        word itself, its informal synonyms, and its related terms at 80%
+        credit (see _query_groups). Words that appear in no movie's genres or
+        keywords are ignored, not counted against the movie.
+      * A genre match counts fully; a keyword match counts a little less, in
+        the same ratio as FIELD_WEIGHTS (35/40 = 0.875).
+      * If neighbouring typed words form an exact keyword ("diamond heist"),
+        a movie with that keyword gets full credit for both words.
       * The score is the average over items. "romantic comedy": a movie that
         is both scores 1.0, a comedy that isn't romantic scores 0.5.
 
     Extra genres on a movie never lower its score. Returns None if none of the
     query's words are recognised (so the caller can skip this component).
     """
-    vocabulary = features.vectorizer.vocabulary_
     best_field = max(FIELD_WEIGHTS["g"], FIELD_WEIGHTS["k"])
     credit = {f: FIELD_WEIGHTS[f] / best_field for f in ("g", "k")}
 
-    per_item = []
-    for group in _query_groups(query, strip_mood):
+    pairs = _query_groups(query, strip_mood)
+    items = []
+    for _typed, group in pairs:
         item = None
-        for word in group:
-            for field in ("g", "k"):
-                column = vocabulary.get(f"{field}_{word}")
-                if column is not None:
-                    hit = features.presence[:, column].toarray().ravel() * credit[field]
-                    item = hit if item is None else np.maximum(item, hit)
-        if item is not None:
-            per_item.append(item)
-    return np.mean(per_item, axis=0) if per_item else None
+        for word, word_credit in group:
+            hits = _word_hits(word, features, credit)
+            if hits is not None:
+                hits = hits * word_credit
+                item = hits if item is None else np.maximum(item, hits)
+        items.append(item)
+
+    # Exact multi-word keywords typed by the user, e.g. "diamond heist".
+    typed = [t for t, _ in pairs]
+    skip = [strip_mood and t in MOOD_WORDS for t in typed]   # don't let a phrase sneak a mood word back in
+    i = 0
+    while i < len(typed):
+        for length in (3, 2):
+            span = range(i, i + length)
+            if i + length <= len(typed) and not any(skip[j] for j in span):
+                rows = features.keyword_phrases.get(" ".join(_singular(typed[j]) for j in span))
+                if rows is not None:
+                    exact = np.zeros(len(features.movie_ids)); exact[rows] = 1.0
+                    for j in span:
+                        items[j] = exact if items[j] is None else np.maximum(items[j], exact)
+                    i += length - 1
+                    break
+        i += 1
+
+    items = [item for item in items if item is not None]
+    return np.mean(items, axis=0) if items else None
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +425,36 @@ class NLPFeatures:
     sentiment: np.ndarray        # VADER score per movie, -1..1
     has_overview: np.ndarray     # False where sentiment is just a neutral placeholder
     cert_bucket: list            # 'family' / 'teen' / 'adult' / 'unrated'
+    keyword_heads: dict          # last word of each keyword -> movie rows (see _keyword_indexes)
+    keyword_phrases: dict        # multi-word keyword (as words) -> movie rows
+
+
+def _keyword_indexes(movies):
+    """Two lookup tables for matching typed words against movie keywords.
+
+    TF-IDF splits a keyword like "diamond mine" into the words "diamond" and
+    "mine", so a search for "diamond" used to match it. For query matching we
+    keep keywords whole instead:
+      keyword_heads    - the LAST word of each keyword (its "head noun"): "bank
+                         heist" and "jewelry heist" are kinds of heist, "diamond
+                         mine" is a kind of mine. Stop words are kept here, since
+                         scikit-learn counts "mine" as one.
+      keyword_phrases  - each multi-word keyword, so a typed "diamond heist"
+                         can match the keyword "diamond heist" exactly.
+    Both map to arrays of movie row numbers. (This is only used for typed
+    queries; the TF-IDF vectors used for "more like this" are unchanged.)
+    """
+    heads, phrases = {}, {}
+    for row, movie in enumerate(movies):
+        for keyword in movie.get("keywords") or []:
+            raw = re.findall(r"[a-z0-9]+", keyword.lower())
+            if raw:
+                heads.setdefault(_singular(raw[-1]), set()).add(row)
+            words = [_singular(w) for w in _words(keyword)]
+            if len(words) > 1:
+                phrases.setdefault(" ".join(words), set()).add(row)
+    as_arrays = lambda table: {key: np.array(sorted(rows)) for key, rows in table.items()}
+    return as_arrays(heads), as_arrays(phrases)
 
 
 def build_features(movies):
@@ -329,6 +470,7 @@ def build_features(movies):
 
     overviews = [(m.get("overview") or "").strip() for m in movies]
     tfidf_matrix = _apply_field_weights(raw, col_fields)
+    keyword_heads, keyword_phrases = _keyword_indexes(movies)
     return NLPFeatures(
         movie_ids=[m.get("id") for m in movies],
         vectorizer=vectorizer,
@@ -338,6 +480,8 @@ def build_features(movies):
         sentiment=np.array([sentiment_score(o) for o in overviews]),
         has_overview=np.array([bool(o) for o in overviews]),
         cert_bucket=[certification_bucket(m.get("certification")) for m in movies],
+        keyword_heads=keyword_heads,
+        keyword_phrases=keyword_phrases,
     )
 
 

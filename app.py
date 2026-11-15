@@ -33,10 +33,13 @@ MIN_PLATFORM_MOVIES = 10   # platforms with fewer movies than this are left out 
 RUNTIME_MAX = 240          # right end of the runtime slider (= "no maximum")
 
 # Colours used for the three "why" bars (the page theme is in .streamlit/config.toml)
-COLOURS = {"content": "#FF8A65", "sentiment": "#F27AA5", "quality": "#7BD9A5"}
+COLOURS = {"content": "#FF8A65", "sentiment": "#F27AA5", "quality": "#7BD9A5", "recency": "#FFD479"}
 ROLES = {"Anyone": "any", "Actors": "actor", "Directors": "director"}
 EXAMPLES = ["Funny and light", "A tense heist", "Animated for the whole family",
             "Date-night romance", "Mind-bending sci-fi"]   # one-tap searches in the hero
+# The recency slider: -1 = favour classics ... 0 = no preference ... +1 = favour new films.
+RECENCY_LABELS = {-1.0: "Mostly classics", -0.5: "Lean classic", 0.0: "No preference",
+                  0.5: "Lean new", 1.0: "Mostly new"}
 MOOD_STEPS = [round(i * 0.2, 1) for i in range(-5, 6)]  # -1.0 (dark) ... +1.0 (light)
 
 STYLE = """
@@ -118,6 +121,13 @@ button[data-testid="stBaseButton-primary"] { border-radius: 999px; background: v
   border-color: rgba(242,122,165,.5); box-shadow: inset 4px 0 0 var(--rose);
 }
 [data-testid="stSidebar"] [data-testid="stExpander"]:has([class*="st-key-mood"]) summary p { color: var(--rose); }
+
+/* --- recency panel: butter accent (butter = "newness"; it matches the Era fit bar) ----- */
+[data-testid="stSidebar"] [data-testid="stExpander"]:has([class*="st-key-recency"]) {
+  border-color: rgba(255,212,121,.45); box-shadow: inset 4px 0 0 var(--butter);
+}
+[data-testid="stSidebar"] [data-testid="stExpander"]:has([class*="st-key-recency"]) summary p { color: var(--butter); }
+[data-testid="stSidebar"] h3 { margin-top: 0.5rem; }
 
 /* --- sidebar: bigger labels, roomier groups -------------------------------- */
 [data-testid="stSidebar"] h3 { font-size: 1.6rem; }
@@ -242,9 +252,10 @@ def run_filters(_movies, size, criteria):
 
 
 @st.cache_data(show_spinner=False, max_entries=128)
-def run_recommend(_movies, _features, size, query, tone, candidate_ids, n):
-    return recommender.recommend(
-        query or None, tone=tone, n=n, candidate_ids=candidate_ids,
+def run_recommend(_movies, _features, size, query, tone, recency, candidate_ids, n):
+    """(top n results, how many films matched in total)"""
+    return recommender.recommend_with_count(
+        query or None, tone=tone, recency=recency, n=n, candidate_ids=candidate_ids,
         movies=_movies, features=_features,
     )
 
@@ -296,7 +307,7 @@ def shorten(text, limit=210):
 # ---------------------------------------------------------------------------
 def default_values(options):
     return {
-        "mood_on": False, "mood": 0.0,
+        "mood_on": False, "mood": 0.0, "recency": 0.0,
         "platforms": [],
         "genres_all": [], "genres_any": [], "genres_none": [],
         "years": (options["year_min"], options["year_max"]), "decades": [],
@@ -319,10 +330,14 @@ def labels_with_counts(rows):
 
 
 def render_sidebar(options, defaults):
-    """Draw the filters. Returns (criteria for filters.py, wanted tone or None)."""
+    """Draw the sidebar. Returns (criteria for filters.py, wanted tone or None, recency)."""
     ss = st.session_state
-    st.sidebar.markdown("### Filters")
-    st.sidebar.button("Reset filters", on_click=reset_filters, args=(defaults,), width="stretch")
+    st.sidebar.button("Reset all", on_click=reset_filters, args=(defaults,), width="stretch")
+
+    # Two clearly separate groups. Preferences only RE-ORDER the results (no film
+    # is ever removed by them); filters REMOVE films that don't fit.
+    st.sidebar.markdown("### Preferences")
+    st.sidebar.caption("Nudges. They re-order your results but never remove a film.")
 
     with st.sidebar.expander("Mood", expanded=True):
         st.toggle("Match a mood", key="mood_on",
@@ -331,6 +346,15 @@ def render_sidebar(options, defaults):
         if ss["mood_on"]:
             st.select_slider("Dark to light", options=MOOD_STEPS, key="mood",
                              format_func=lambda v: f"{tone_label(v).capitalize()} ({v:+.1f})")
+
+    with st.sidebar.expander("Newer or older?", expanded=True):
+        st.select_slider("Recency", options=list(RECENCY_LABELS), key="recency",
+                         format_func=RECENCY_LABELS.get,
+                         help="A nudge, not a filter: films from the other era are still shown, just lower "
+                              "down. To hide films by year, use Release date under Filters.")
+
+    st.sidebar.markdown("### Filters")
+    st.sidebar.caption("Hard cuts. Films that don't fit are removed.")
 
     with st.sidebar.expander("Where to watch", expanded=True):
         names = labels_with_counts(options["platforms"])
@@ -349,7 +373,9 @@ def render_sidebar(options, defaults):
                        placeholder="None", help="NOT: movies with any of these genres are removed.")
 
     with st.sidebar.expander("Release date"):
-        st.slider("Release year", options["year_min"], options["year_max"], key="years")
+        st.slider("Release year", options["year_min"], options["year_max"], key="years",
+                  help="Removes films outside this range. To lean newer or older without removing "
+                       "anything, use Recency under Preferences.")
         names = labels_with_counts(options["decades"])
         st.multiselect("Decade", list(names), key="decades", format_func=names.get, placeholder="Any")
 
@@ -401,7 +427,7 @@ def render_sidebar(options, defaults):
         "platforms": list(ss["platforms"]),
     }
     tone = ss["mood"] if ss["mood_on"] else None
-    return criteria, tone
+    return criteria, tone, ss["recency"]
 
 
 def count_active_filters(criteria, options):
@@ -421,7 +447,7 @@ def count_active_filters(criteria, options):
 # ---------------------------------------------------------------------------
 # Result cards
 # ---------------------------------------------------------------------------
-def why_rows(result, query, tone):
+def why_rows(result, query, tone, recency=0.0):
     """The "why this pick" explanation, built from recommender.py's component scores.
 
     Returns one dict per component that was actually used: its colour, label,
@@ -443,6 +469,13 @@ def why_rows(result, query, tone):
             text = (f"You wanted {tone_label(tone)}; its plot reads "
                     f"{tone_label(details['movie_tone'])} ({details['movie_tone']:+.2f}).")
         rows.append(("sentiment", "Mood fit", parts["sentiment"], text))
+
+    if parts.get("recency") is not None:
+        year = result["movie"].get("release_year")
+        wanted = "newer films" if recency > 0 else "classics"
+        text = (f"You asked for {wanted}; this came out in {year}." if year
+                else f"You asked for {wanted}; its release year is unknown, so it counts as average.")
+        rows.append(("recency", "Era fit", parts["recency"], text))
 
     votes = result["movie"].get("vote_count") or 0
     text = f"Weighted rating {details['weighted_rating']:.1f}/10 ({votes:,} votes)."
@@ -572,7 +605,7 @@ def main():
     st.session_state.setdefault("more_like", None)
     by_id = {m["id"]: m for m in movies}
 
-    criteria, tone = render_sidebar(options, defaults)
+    criteria, tone, recency = render_sidebar(options, defaults)
 
     # --- hero: wordmark, pitch, search box and one-tap example searches -------
     with st.container(key="hero"):
@@ -627,7 +660,7 @@ def main():
                         badge="Closest match" if rank == 1 else None)
         return
 
-    results = run_recommend(movies, features, size, query, tone, candidate_ids, RESULTS)
+    results, total = run_recommend(movies, features, size, query, tone, recency, candidate_ids, RESULTS)
 
     if query:
         st.subheader(f"Top picks for “{query}”")
@@ -641,13 +674,25 @@ def main():
     else:
         with st.container(key="results-head"):
             st.subheader("Top picks tonight")
+            ranked_by = ["quality"] + (["mood"] if tone is not None else []) + (["release date"] if recency else [])
             st.caption("Type what you are in the mood for, or tap an idea above, to personalise the list. "
-                       "Right now it ranks by quality" + (" and mood." if tone is not None else "."))
+                       f"Right now it ranks by {' and '.join(ranked_by)}.")
 
     # With no search and no mood there is nothing to "match", only quality to rank by
-    label = "match" if (query or tone is not None) else "score"
+    label = "match" if (query or tone is not None or recency) else "score"
+
+    # Only films that match the search are ever shown (no filler), so say so when
+    # there are fewer than a full page, or none.
+    searched = bool(query) and recommender.query_has_matches(query, movies, features, tone)
+    if searched and not results:
+        st.info(f"No films match “{query}” with your current filters. Try loosening a filter, "
+                "or searching for something a little broader.")
+    elif searched and total < RESULTS:
+        st.info(f"Only {total} film{'s' if total != 1 else ''} match “{query}” with your current filters, "
+                "so that's all we're showing.")
+
     for rank, result in enumerate(results, 1):
-        render_card(result["movie"], result["score"], render_why(why_rows(result, query, tone)),
+        render_card(result["movie"], result["score"], render_why(why_rows(result, query, tone, recency)),
                     key=f"more_{rank}_{result['movie']['id']}", score_label=label,
                     badge="Top pick" if rank == 1 else None)
 

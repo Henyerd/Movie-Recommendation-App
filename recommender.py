@@ -11,9 +11,17 @@ scores, each on a 0-to-1 scale, which are blended into one final score:
 The final score is the weighted sum of the three. Every result carries all
 three component scores, so the UI can say *why* a movie was recommended.
 
+An optional fourth score, recency, can be switched on to nudge results toward
+newer films (or toward classics). It is off by default.
+
+Only films that actually match the search are returned. If the user typed a
+query we recognise, a film with a content score of 0 is never shown, however
+well rated it is. So if only 16 films match, you get 16 (not 16 plus filler).
+
 Main entry points:
-    recommend(...)       - ranked list for a query and/or a seed movie
-    similar_movies(id)   - "more like this": content similarity alone
+    recommend(...)             - ranked list for a query and/or a seed movie
+    recommend_with_count(...)  - the same, plus how many films matched in total
+    similar_movies(id)         - "more like this": content similarity alone
 """
 
 import numpy as np
@@ -33,6 +41,17 @@ WEIGHTS = {"content": 0.55, "sentiment": 0.25, "quality": 0.20}
 QUALITY_PRIOR_VOTES = 500
 
 DEFAULT_N = 10
+
+# Recency preference (the "newer / classics" slider). A soft nudge: when it is
+# on, recency joins the blend as a fourth component. At full strength it gets
+# this much weight (before everything is rescaled to add up to 1); half
+# strength gets half of it. Off (0) means the component is left out entirely,
+# so results are exactly as if the feature didn't exist.
+RECENCY_MAX_WEIGHT = 0.30
+
+# How fast "newness" fades. The newest film in the corpus scores 1, a film this
+# many years older scores 0, and everything in between is a straight line.
+RECENCY_SPAN_YEARS = 40
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +94,22 @@ def quality_scores(movies, prior_votes=QUALITY_PRIOR_VOTES):
     wr = weighted_ratings(movies, prior_votes)
     spread = wr.max() - wr.min()
     return (wr - wr.min()) / spread if spread > 0 else np.full(len(wr), 0.5)
+
+
+# ---------------------------------------------------------------------------
+# Optional component 4: recency
+# ---------------------------------------------------------------------------
+def recency_scores(movies, span=RECENCY_SPAN_YEARS):
+    """How new each film is, from 0 (span years older than the newest film) to 1.
+
+        score = 1 - (newest year in corpus - film's year) / span, floored at 0
+
+    "Newest" is taken from the data, not today's date, so scores don't drift
+    as the calendar moves. A film with no release year gets 0.5 (neutral).
+    """
+    years = np.array([m.get("release_year") or np.nan for m in movies], dtype=float)
+    score = np.clip(1.0 - (np.nanmax(years) - years) / span, 0.0, 1.0)
+    return np.where(np.isnan(years), 0.5, score)
 
 
 # ---------------------------------------------------------------------------
@@ -151,23 +186,34 @@ def _index_of(movies, movie_id):
 # ---------------------------------------------------------------------------
 # Main entry points
 # ---------------------------------------------------------------------------
-def recommend(
+def recommend(query=None, **kwargs):
+    """Rank movies for a user and return the top `n` (see recommend_with_count)."""
+    return recommend_with_count(query, **kwargs)[0]
+
+
+def recommend_with_count(
     query=None,
     *,
     seed_id=None,
     tone=None,
+    recency=0.0,
     n=DEFAULT_N,
     candidate_ids=None,
     exclude_ids=(),
     movies=None,
     features=None,
 ):
-    """Rank movies for a user and return the top `n`.
+    """Rank movies for a user. Returns (top `n` results, total films that matched).
+
+    The total lets the UI say "only 16 films match" when fewer than `n` do.
+    With no usable query or seed, every eligible film counts as a match.
 
     Inputs (all optional, use any combination):
         query          free text, e.g. "something funny"
         seed_id        TMDB id of a movie the user likes ("like this one")
         tone           wanted tone from -1 (dark) to +1 (light)
+        recency        -1 (favour classics) .. 0 (no preference, the default) ..
+                       +1 (favour new films). A nudge, never a filter.
         candidate_ids  only rank these movie ids. This is where the output of
                        filters.py plugs in (runtime, genre, certification...)
         exclude_ids    ids never to return, e.g. movies already seen
@@ -175,7 +221,8 @@ def recommend(
     For a typed query the content score is the share of the query's words the
     movie matches (mood words like "dark" are ignored when `tone` is given,
     so tone isn't counted twice); for a seed movie it is TF-IDF cosine
-    similarity. If both
+    similarity. A film that matches none of the query/seed (content 0) is not
+    shown at all. If both
     are given the two are averaged (the query score tends to run higher, so it
     will dominate a little). A component with no input is left out and the remaining weights
     are rescaled to add up to 1: no tone -> sentiment is skipped; no
@@ -185,7 +232,7 @@ def recommend(
     Each result is a dict:
         movie          the movie's full dict from the cache
         score          final score, 0 to 1
-        components     {"content", "sentiment", "quality"} each 0 to 1,
+        components     {"content", "sentiment", "quality", "recency"} each 0 to 1,
                        or None for a component that was skipped
         weights        the weights actually used (sum to 1)
         contributions  component * weight; these add up to `score`
@@ -211,7 +258,7 @@ def recommend(
         excluded.add(seed_id)
     eligible &= ~np.isin(ids, list(excluded))
     if not eligible.any():
-        return []
+        return [], 0
 
     # --- component 1: content ----------------------------------------------
     similarities = []
@@ -224,6 +271,11 @@ def recommend(
     if seed_id is not None:
         similarities.append(_similarity_to_seed(features, seed_index))
     content = np.mean(similarities, axis=0) if similarities else None
+    if content is not None:
+        eligible &= content > 0       # no padding: unrelated films are never shown
+        if not eligible.any():
+            return [], 0
+    total = int(eligible.sum())
 
     # --- component 2: sentiment --------------------------------------------
     sentiment = None
@@ -237,8 +289,14 @@ def recommend(
     quality = quality_scores(movies)
 
     # --- blend ---------------------------------------------------------------
-    parts = {"content": content, "sentiment": sentiment, "quality": quality}
-    active = {k: WEIGHTS[k] for k, v in parts.items() if v is not None}
+    newness = None
+    if recency:
+        newness = recency_scores(movies)
+        if recency < 0:               # favouring classics: flip the scale
+            newness = 1.0 - newness
+    parts = {"content": content, "sentiment": sentiment, "quality": quality, "recency": newness}
+    base = dict(WEIGHTS, recency=RECENCY_MAX_WEIGHT * abs(recency))
+    active = {k: base[k] for k, v in parts.items() if v is not None}
     total_weight = sum(active.values())
     weights = {k: w / total_weight for k, w in active.items()}
     score = sum(weights[k] * parts[k] for k in weights)
@@ -264,7 +322,7 @@ def recommend(
                 },
             }
         )
-    return results
+    return results, total
 
 
 def similar_movies(movie_id, n=DEFAULT_N, movies=None, features=None):
@@ -278,5 +336,5 @@ def similar_movies(movie_id, n=DEFAULT_N, movies=None, features=None):
     index = _index_of(movies, movie_id)
     similarity = _similarity_to_seed(features, index)
     similarity[index] = -1  # never return the movie itself
-    best = np.argsort(-similarity, kind="stable")[:n]
+    best = [i for i in np.argsort(-similarity, kind="stable")[:n] if similarity[i] > 0]  # no zero-similarity padding
     return [{"movie": movies[i], "similarity": float(similarity[i])} for i in best]
