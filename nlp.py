@@ -11,6 +11,8 @@ human text. This module turns each movie into numbers in three ways:
 
 Main entry points:
     get_features(movies)         - computes everything once and caches it
+    query_scores(text, features) - scores every movie by how many of the typed
+                                   query's words it matches (used for queries)
     query_vector(text, features) - turns a typed query into a vector in the
                                    same space as the movies
     similarity_matrix(features)  - movie-to-movie similarity scores
@@ -147,13 +149,25 @@ def _apply_field_weights(X, col_fields):
     return combined[:, np.argsort(np.concatenate(order))]  # restore column order
 
 
-def _query_text(query):
-    """Turn a typed query into prefixed words in the same style as _movie_text."""
+def _query_groups(query):
+    """Split a typed query into one group of alternative words per typed word.
+
+    "something funny" -> [["funny", "comedy"]]: the typed word plus any
+    synonyms from QUERY_SYNONYMS. A movie matching ANY word in a group counts
+    as matching that typed word.
+    """
     q = (query or "").lower().replace("sci-fi", "science fiction").replace("scifi", "science fiction")
     q = _NEGATION.sub(" ", q)  # drop negated words: "not stupid" -> ""
-    words = [w for w in _words(q) if w not in _QUERY_FILLER]
-    for w in list(words):
-        words += QUERY_SYNONYMS.get(w, [])
+    return [
+        [w] + QUERY_SYNONYMS.get(w, [])
+        for w in _words(q)
+        if w not in _QUERY_FILLER
+    ]
+
+
+def _query_text(query):
+    """Turn a typed query into prefixed words in the same style as _movie_text."""
+    words = [w for group in _query_groups(query) for w in group]
     # We don't know whether a typed word is a genre or a keyword, so offer it
     # as both. Words the model has never seen are ignored automatically.
     return " ".join([f"g_{w}" for w in words] + [f"k_{w}" for w in words])
@@ -163,7 +177,10 @@ def query_vector(query, features):
     """Turn free text like "something funny but not stupid" into a vector in
     the same space as the movies.
 
-    Returns a 1-row sparse matrix. `features.tfidf_matrix @ vec.T` gives the
+    NOTE: the recommender no longer ranks typed queries with this vector,
+    because cosine similarity penalises movies that have extra genres (see
+    query_scores below). It is kept for anyone who wants the raw TF-IDF
+    vector. Returns a 1-row sparse matrix. `features.tfidf_matrix @ vec.T` gives the
     similarity of the query to every movie (0 to 1). Unlike the movies, the
     query IS rescaled to length 1: it only mentions the fields the user typed
     about, so a genre-only query like "funny" can still reach a score of 1 for a
@@ -173,6 +190,45 @@ def query_vector(query, features):
     """
     raw = features.vectorizer.transform([_query_text(query)])
     return normalize(_apply_field_weights(raw, features.col_fields))
+
+
+def query_scores(query, features):
+    """Score every movie by how many of the query's words it matches (0 to 1).
+
+    This is what the recommender uses for typed queries. Cosine similarity
+    asks "are these two word-lists the same shape?", so a "Comedy, Adventure,
+    Animation" movie scored far lower than a "Comedy"-only movie for the query
+    "funny", even though both are funny. Here we ask a simpler question: of
+    the words the user typed, what share does this movie have?
+
+      * Each typed word (plus its synonyms) is one item. Words we have never
+        seen in any movie's genres or keywords are ignored, not counted
+        against the movie.
+      * A movie matches an item if the word appears in its genres or its
+        keywords. A genre match counts fully; a keyword match counts a little
+        less, in the same ratio as FIELD_WEIGHTS (35/40 = 0.875).
+      * The score is the average over items. "romantic comedy": a movie that
+        is both scores 1.0, a comedy that isn't romantic scores 0.5.
+
+    Extra genres on a movie never lower its score. Returns None if none of the
+    query's words are recognised (so the caller can skip this component).
+    """
+    vocabulary = features.vectorizer.vocabulary_
+    best_field = max(FIELD_WEIGHTS["g"], FIELD_WEIGHTS["k"])
+    credit = {f: FIELD_WEIGHTS[f] / best_field for f in ("g", "k")}
+
+    per_item = []
+    for group in _query_groups(query):
+        item = None
+        for word in group:
+            for field in ("g", "k"):
+                column = vocabulary.get(f"{field}_{word}")
+                if column is not None:
+                    hit = features.presence[:, column].toarray().ravel() * credit[field]
+                    item = hit if item is None else np.maximum(item, hit)
+        if item is not None:
+            per_item.append(item)
+    return np.mean(per_item, axis=0) if per_item else None
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +287,7 @@ class NLPFeatures:
     vectorizer: TfidfVectorizer
     col_fields: np.ndarray       # which field (g/k/c/d) each column belongs to
     tfidf_matrix: sparse.csr_matrix  # one weighted row per movie (length <= 1)
+    presence: sparse.csc_matrix  # 1 where a movie has a term, else 0 (for query_scores)
     sentiment: np.ndarray        # VADER score per movie, -1..1
     has_overview: np.ndarray     # False where sentiment is just a neutral placeholder
     cert_bucket: list            # 'family' / 'teen' / 'adult' / 'unrated'
@@ -248,11 +305,13 @@ def build_features(movies):
     col_fields = np.array([t.split("_", 1)[0] for t in vectorizer.get_feature_names_out()])
 
     overviews = [(m.get("overview") or "").strip() for m in movies]
+    tfidf_matrix = _apply_field_weights(raw, col_fields)
     return NLPFeatures(
         movie_ids=[m.get("id") for m in movies],
         vectorizer=vectorizer,
         col_fields=col_fields,
-        tfidf_matrix=_apply_field_weights(raw, col_fields),
+        tfidf_matrix=tfidf_matrix,
+        presence=(tfidf_matrix > 0).astype(np.float32).tocsc(),
         sentiment=np.array([sentiment_score(o) for o in overviews]),
         has_overview=np.array([bool(o) for o in overviews]),
         cert_bucket=[certification_bucket(m.get("certification")) for m in movies],
