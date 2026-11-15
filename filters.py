@@ -147,6 +147,18 @@ def platform_key(name):
     return re.sub(r"\s+", " ", _strip_platform(name).lower().replace("+", " plus")).strip()
 
 
+def streaming_platforms(movie):
+    """Platforms a movie streams on in Canada, one entry per brand.
+
+    e.g. ["Crave", "Netflix"]. Variants are merged the same way the platform
+    filter merges them, so what the UI shows matches what the filter matches.
+    """
+    brands = {}
+    for name in (movie.get("providers_ca") or {}).get("stream") or []:
+        brands.setdefault(platform_key(name), _strip_platform(name))
+    return list(brands.values())
+
+
 def _stream_keys(movie):
     stream = (movie.get("providers_ca") or {}).get("stream") or []
     return {platform_key(name) for name in stream}

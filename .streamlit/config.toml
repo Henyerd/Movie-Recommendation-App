@@ -1,0 +1,9 @@
+# Streamlit theme for Tiebreaker: a dark, "movie night" look with a warm
+# gold accent. Unlike secrets.toml, this file is safe to commit.
+[theme]
+base = "dark"
+primaryColor = "#F5B841"
+backgroundColor = "#12141A"
+secondaryBackgroundColor = "#1B1E27"
+textColor = "#EDEEF2"
+font = "sans serif"
