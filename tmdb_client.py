@@ -222,6 +222,7 @@ def _parse_movie(raw):
     return {
         "id": raw.get("id"),
         "title": raw.get("title") or "",
+        "original_language": raw.get("original_language") or "",  # ISO code, e.g. "en"
         "release_year": year,
         "runtime": raw.get("runtime") or None,  # TMDB uses 0 for "unknown"
         "certification": certification,
@@ -278,8 +279,17 @@ def build_cache(target=TARGET_MOVIES, path=CACHE_PATH):
         if n % 50 == 0 or n == len(movie_ids):
             print(f"  {n}/{len(movie_ids)} done ({time.time() - started:.0f}s elapsed)")
 
-    # Write to a temporary file first, then swap it in. That way a crash
-    # mid-write can never leave a half-written movies.json behind.
+    _write_cache(movies, path)
+    print(f"Saved {len(movies)} movies to {path} ({skipped} skipped).")
+    return movies
+
+
+def _write_cache(movies, path):
+    """Save the movie list as JSON.
+
+    Writes to a temporary file first, then swaps it in. That way a crash
+    mid-write can never leave a half-written movies.json behind.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)  # data/ is git-ignored
     temp_path = path.with_suffix(".tmp")
@@ -287,7 +297,43 @@ def build_cache(target=TARGET_MOVIES, path=CACHE_PATH):
         json.dump(movies, f, ensure_ascii=False, indent=2)
     os.replace(temp_path, path)
 
-    print(f"Saved {len(movies)} movies to {path} ({skipped} skipped).")
+
+def add_original_language(path=CACHE_PATH):
+    """One-off upgrade for caches built before original_language was saved.
+
+    Fetches just that one field for each cached movie (about 1000 quick
+    requests, ~3 minutes) and writes it into the existing cache file, so the
+    set of movies stays exactly the same. Movies that already have the field
+    are skipped, so it is safe to run twice.
+    """
+    path = Path(path)
+    with open(path, encoding="utf-8") as f:
+        movies = json.load(f)
+    todo = [m for m in movies if "original_language" not in m]
+    if not todo:
+        print("Every movie already has original_language.")
+        return movies
+
+    session = _make_session()
+    print(f"Fetching original_language for {len(todo)} movies...")
+    failed = 0
+    for n, movie in enumerate(todo, start=1):
+        try:
+            raw = _get(session, f"/movie/{movie['id']}")
+        except TMDBAuthError:
+            raise
+        except TMDBError as exc:
+            print(f"  skipping movie {movie['id']}: {exc}")
+            raw = None
+        if raw is None:
+            failed += 1
+        else:
+            movie["original_language"] = raw.get("original_language") or ""
+        if n % 100 == 0 or n == len(todo):
+            print(f"  {n}/{len(todo)} done")
+
+    _write_cache(movies, path)
+    print(f"Saved. {failed} movies could not be updated (run again to retry them).")
     return movies
 
 
