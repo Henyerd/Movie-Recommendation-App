@@ -185,6 +185,11 @@ div[data-testid="stImage"] img { border-radius: 16px; max-width: 280px !importan
 .tb-noposter { aspect-ratio: 2 / 3; max-width: 280px; border-radius: 16px; border: 1px dashed rgba(247,235,221,.3);
                display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.95rem; }
 
+/* --- footer (TMDB attribution) --------------------------------------------------------- */
+.tb-footer { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line); text-align: center;
+             color: var(--muted); font-size: 0.9rem; line-height: 1.6; }
+.tb-footer a { color: var(--coral); }
+
 /* --- narrower screens: the "why" panel drops below the details, then
        everything stacks on phones ----------------------------------------- */
 @media (max-width: 1180px) {
@@ -207,6 +212,10 @@ div[data-testid="stImage"] img { border-radius: 16px; max-width: 280px !importan
 }
 </style>
 """
+
+# Required by TMDB's terms wherever their data is shown. Posters and all film
+# details in this app come from TMDB.
+TMDB_NOTICE = "This product uses the TMDB API but is not endorsed or certified by TMDB."
 
 # Two overlapping rings: two people, one shared choice.
 LOGO = (
@@ -588,13 +597,29 @@ def use_example(text):
 # ---------------------------------------------------------------------------
 # The page
 # ---------------------------------------------------------------------------
+def render_footer():
+    st.markdown(
+        f'<div class="tb-footer">{esc(TMDB_NOTICE)}<br>'
+        'Film data and posters courtesy of <a href="https://www.themoviedb.org" target="_blank" '
+        'rel="noopener noreferrer">The Movie Database (TMDB)</a>.</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     st.markdown(STYLE, unsafe_allow_html=True)
+    # render_page() has several early exits (no results, "More like this", no data).
+    # Calling the footer here, after it returns, draws it on every screen.
+    # (Don't use st.stop() inside render_page: Streamlit drops anything drawn after it.)
+    render_page()
+    render_footer()
 
+
+def render_page():
     if not tmdb_client.CACHE_PATH.exists():
         st.error("No movie data yet. In a terminal, run `python build_cache.py` (about 4 minutes), "
                  "then reload this page.")
-        st.stop()
+        return
 
     movies, features = load_catalogue()
     size = len(movies)
